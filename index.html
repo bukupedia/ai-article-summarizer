@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI Article Summarizer</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body>
+  <header class="bg-dark text-white py-4 mb-4">
+    <div class="container">
+      <h1 class="h3 mb-0">AI Article Summarizer</h1>
+      <p class="mb-0 opacity-75">Prompt‑engineered summaries from any article</p>
+    </div>
+  </header>
+
+  <main class="container mb-5">
+    <section class="row g-4">
+      <div class="col-12 col-lg-6">
+        <article class="card shadow-sm h-100">
+          <div class="card-body">
+            <h2 class="h5">1. Article Input</h2>
+            <label for="articleText" class="form-label">Paste article text</label>
+            <textarea id="articleText" class="form-control" rows="12" placeholder="Paste full article here..."></textarea>
+          </div>
+        </article>
+      </div>
+
+      <div class="col-12 col-lg-6">
+        <article class="card shadow-sm h-100">
+          <div class="card-body">
+            <h2 class="h5">2. Summary Settings</h2>
+
+            <div class="mb-3">
+              <label for="audience" class="form-label">Audience</label>
+              <select id="audience" class="form-select">
+                <option>Busy professionals</option>
+                <option>Executives</option>
+                <option>Students</option>
+                <option>General audience</option>
+              </select>
+            </div>
+
+            <div class="mb-3">
+              <label for="length" class="form-label">Max length</label>
+              <select id="length" class="form-select">
+                <option value="100">100 words</option>
+                <option value="150" selected>150 words</option>
+                <option value="250">250 words</option>
+              </select>
+            </div>
+
+            <div class="mb-3">
+              <label for="focus" class="form-label">Focus</label>
+              <select id="focus" class="form-select">
+                <option>Main ideas</option>
+                <option>Key insights</option>
+                <option>Arguments & conclusions</option>
+                <option>Actionable takeaways</option>
+              </select>
+            </div>
+
+            <button id="summarizeBtn" class="btn btn-primary w-100">Generate Summary</button>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="row mt-4">
+      <div class="col-12">
+        <article class="card shadow-sm">
+          <div class="card-body">
+            <h2 class="h5">3. Summary Output</h2>
+            <div id="loading" class="text-muted d-none">Generating summary...</div>
+            <pre id="output" class="bg-light p-3 rounded small mb-0" style="white-space: pre-wrap;"></pre>
+          </div>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <footer class="border-top py-4">
+    <div class="container small text-muted">
+      Built with Vanilla JS + Bootstrap + Semantic HTML
+    </div>
+  </footer>
+
+  <script>
+    const API_KEY = "PASTE_YOUR_OPENAI_API_KEY_HERE"; // ⚠️ Not secure for production
+
+    const articleEl = document.getElementById('articleText');
+    const audienceEl = document.getElementById('audience');
+    const lengthEl = document.getElementById('length');
+    const focusEl = document.getElementById('focus');
+    const btn = document.getElementById('summarizeBtn');
+    const outputEl = document.getElementById('output');
+    const loadingEl = document.getElementById('loading');
+
+    function buildPrompt(article, audience, length, focus) {
+      return `Act as a professional editor skilled at turning long content into clear, useful summaries.\n\nAudience: ${audience}\n\nYour task: Summarize the article below.\n\nConstraints:\n- Length: Under ${length} words\n- Focus: ${focus}\n- Exclude: filler, repetition, weak examples\n- Language: simple and clear\n\nOutput format:\n1. Overview (1 sentence)\n2. Key Points (bullet list)\n3. Actionable Insights (bullet list)\n\nArticle:\n${article}`;
+    }
+
+    async function summarize() {
+      const article = articleEl.value.trim();
+      if (!article) {
+        alert('Please paste an article first.');
+        return;
+      }
+
+      const prompt = buildPrompt(
+        article,
+        audienceEl.value,
+        lengthEl.value,
+        focusEl.value
+      );
+
+      outputEl.textContent = '';
+      loadingEl.classList.remove('d-none');
+      btn.disabled = true;
+
+      try {
+        const res = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${API_KEY}`
+          },
+          body: JSON.stringify({
+            model: 'gpt-4o-mini',
+            messages: [
+              { role: 'user', content: prompt }
+            ],
+            temperature: 0.3
+          })
+        });
+
+        const data = await res.json();
+        const text = data.choices?.[0]?.message?.content || 'No response';
+        outputEl.textContent = text;
+      } catch (err) {
+        outputEl.textContent = 'Error: ' + err.message;
+      } finally {
+        loadingEl.classList.add('d-none');
+        btn.disabled = false;
+      }
+    }
+
+    btn.addEventListener('click', summarize);
+  </script>
+</body>
+</html>
