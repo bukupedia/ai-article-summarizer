@@ -3,8 +3,17 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+  <meta http-equiv="X-Frame-Options" content="DENY" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
   <title>AI Article Summarizer</title>
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <!-- Bootstrap with Subresource Integrity -->
+  <link 
+    href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" 
+    rel="stylesheet"
+    integrity="sha384-T3c6CoIi6uLrA9TneNEoa7RxnatzjcDSCmG1MXxSR1GAsXEV/Dwwykc2MPK8M2HN"
+    crossorigin="anonymous"
+  >
 </head>
 <body>
   <header class="bg-dark text-white py-4 mb-4">
@@ -21,7 +30,8 @@
           <div class="card-body">
             <h2 class="h5">1. Article Input</h2>
             <label for="articleText" class="form-label">Paste article text</label>
-            <textarea id="articleText" class="form-control" rows="12" placeholder="Paste full article here..."></textarea>
+            <textarea id="articleText" class="form-control" rows="12" placeholder="Paste full article here..." maxlength="50000"></textarea>
+            <small class="text-muted"><span id="charCount">0</span>/50,000 characters</small>
           </div>
         </article>
       </div>
@@ -34,10 +44,10 @@
             <div class="mb-3">
               <label for="audience" class="form-label">Audience</label>
               <select id="audience" class="form-select">
-                <option>Busy professionals</option>
-                <option>Executives</option>
-                <option>Students</option>
-                <option>General audience</option>
+                <option value="busy-professionals">Busy professionals</option>
+                <option value="executives">Executives</option>
+                <option value="students">Students</option>
+                <option value="general">General audience</option>
               </select>
             </div>
 
@@ -53,10 +63,10 @@
             <div class="mb-3">
               <label for="focus" class="form-label">Focus</label>
               <select id="focus" class="form-select">
-                <option>Main ideas</option>
-                <option>Key insights</option>
-                <option>Arguments & conclusions</option>
-                <option>Actionable takeaways</option>
+                <option value="main-ideas">Main ideas</option>
+                <option value="key-insights">Key insights</option>
+                <option value="arguments">Arguments &amp; conclusions</option>
+                <option value="actionable">Actionable takeaways</option>
               </select>
             </div>
 
@@ -71,7 +81,11 @@
         <article class="card shadow-sm">
           <div class="card-body">
             <h2 class="h5">3. Summary Output</h2>
-            <div id="loading" class="text-muted d-none">Generating summary...</div>
+            <div id="loading" class="text-muted d-none">
+              <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+              Generating summary...
+            </div>
+            <div id="error" class="alert alert-danger d-none" role="alert"></div>
             <pre id="output" class="bg-light p-3 rounded small mb-0" style="white-space: pre-wrap;"></pre>
           </div>
         </article>
@@ -86,66 +100,174 @@
   </footer>
 
   <script>
-    const API_KEY = "PASTE_YOUR_OPENAI_API_KEY_HERE"; // ⚠️ Not secure for production
+    (function() {
+      'use strict';
 
-    const articleEl = document.getElementById('articleText');
-    const audienceEl = document.getElementById('audience');
-    const lengthEl = document.getElementById('length');
-    const focusEl = document.getElementById('focus');
-    const btn = document.getElementById('summarizeBtn');
-    const outputEl = document.getElementById('output');
-    const loadingEl = document.getElementById('loading');
+      // Configuration - API calls go through backend proxy (API key stored server-side)
+      const API_ENDPOINT = '/api/summarize';
 
-    function buildPrompt(article, audience, length, focus) {
-      return `Act as a professional editor skilled at turning long content into clear, useful summaries.\n\nAudience: ${audience}\n\nYour task: Summarize the article below.\n\nConstraints:\n- Length: Under ${length} words\n- Focus: ${focus}\n- Exclude: filler, repetition, weak examples\n- Language: simple and clear\n\nOutput format:\n1. Overview (1 sentence)\n2. Key Points (bullet list)\n3. Actionable Insights (bullet list)\n\nArticle:\n${article}`;
-    }
+      // Allowed values for validation (whitelist approach)
+      const ALLOWED_AUDIENCES = ['busy-professionals', 'executives', 'students', 'general'];
+      const ALLOWED_LENGTHS = ['100', '150', '250'];
+      const ALLOWED_FOCUS = ['main-ideas', 'key-insights', 'arguments', 'actionable'];
 
-    async function summarize() {
-      const article = articleEl.value.trim();
-      if (!article) {
-        alert('Please paste an article first.');
-        return;
+      // DOM elements
+      const articleEl = document.getElementById('articleText');
+      const audienceEl = document.getElementById('audience');
+      const lengthEl = document.getElementById('length');
+      const focusEl = document.getElementById('focus');
+      const btn = document.getElementById('summarizeBtn');
+      const outputEl = document.getElementById('output');
+      const loadingEl = document.getElementById('loading');
+      const errorEl = document.getElementById('error');
+      const charCountEl = document.getElementById('charCount');
+
+      // Rate limiting
+      let lastRequestTime = 0;
+      const RATE_LIMIT_MS = 3000;
+
+      // Update character count
+      articleEl.addEventListener('input', function() {
+        charCountEl.textContent = this.value.length.toLocaleString();
+      });
+
+      // Input validation
+      function validateInput(article, audience, length, focus) {
+        const errors = [];
+
+        if (!article || article.trim().length < 50) {
+          errors.push('Article must be at least 50 characters long.');
+        }
+
+        if (article.length > 50000) {
+          errors.push('Article exceeds maximum length of 50,000 characters.');
+        }
+
+        if (!ALLOWED_AUDIENCES.includes(audience)) {
+          errors.push('Invalid audience selection.');
+        }
+
+        if (!ALLOWED_LENGTHS.includes(length)) {
+          errors.push('Invalid length selection.');
+        }
+
+        if (!ALLOWED_FOCUS.includes(focus)) {
+          errors.push('Invalid focus selection.');
+        }
+
+        return errors;
       }
 
-      const prompt = buildPrompt(
-        article,
-        audienceEl.value,
-        lengthEl.value,
-        focusEl.value
-      );
-
-      outputEl.textContent = '';
-      loadingEl.classList.remove('d-none');
-      btn.disabled = true;
-
-      try {
-        const res = await fetch('https://api.openai.com/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${API_KEY}`
-          },
-          body: JSON.stringify({
-            model: 'gpt-4o-mini',
-            messages: [
-              { role: 'user', content: prompt }
-            ],
-            temperature: 0.3
-          })
-        });
-
-        const data = await res.json();
-        const text = data.choices?.[0]?.message?.content || 'No response';
-        outputEl.textContent = text;
-      } catch (err) {
-        outputEl.textContent = 'Error: ' + err.message;
-      } finally {
-        loadingEl.classList.add('d-none');
-        btn.disabled = false;
+      // Sanitize text for display (prevent XSS)
+      function sanitizeForDisplay(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
       }
-    }
 
-    btn.addEventListener('click', summarize);
+      // Show error message
+      function showError(message) {
+        errorEl.textContent = message;
+        errorEl.classList.remove('d-none');
+        outputEl.textContent = '';
+      }
+
+      // Hide error message
+      function hideError() {
+        errorEl.classList.add('d-none');
+        errorEl.textContent = '';
+      }
+
+      // Main summarize function
+      async function summarize() {
+        const article = articleEl.value.trim();
+        const audience = audienceEl.value;
+        const length = lengthEl.value;
+        const focus = focusEl.value;
+
+        // Rate limiting check
+        const now = Date.now();
+        if (now - lastRequestTime < RATE_LIMIT_MS) {
+          showError('Please wait a few seconds before making another request.');
+          return;
+        }
+
+        // Validate inputs
+        const validationErrors = validateInput(article, audience, length, focus);
+        if (validationErrors.length > 0) {
+          showError(validationErrors.join(' '));
+          return;
+        }
+
+        hideError();
+        outputEl.textContent = '';
+        loadingEl.classList.remove('d-none');
+        btn.disabled = true;
+        lastRequestTime = now;
+
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+          const res = await fetch(API_ENDPOINT, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              article: article,
+              audience: audience,
+              length: length,
+              focus: focus
+            }),
+            signal: controller.signal
+          });
+
+          clearTimeout(timeoutId);
+
+          if (!res.ok) {
+            const status = res.status;
+            if (status === 429) {
+              throw new Error('Rate limit exceeded. Please try again later.');
+            } else if (status === 400) {
+              throw new Error('Invalid request. Please check your input.');
+            } else if (status >= 500) {
+              throw new Error('Server error. Please try again later.');
+            } else {
+              throw new Error('Request failed. Please try again.');
+            }
+          }
+
+          const data = await res.json();
+
+          if (data.error) {
+            throw new Error(data.error);
+          }
+
+          const text = data.summary || 'No summary generated.';
+          outputEl.textContent = text;
+
+        } catch (err) {
+          if (err.name === 'AbortError') {
+            showError('Request timed out. Please try again.');
+          } else {
+            showError(err.message || 'An unexpected error occurred.');
+          }
+        } finally {
+          loadingEl.classList.add('d-none');
+          btn.disabled = false;
+        }
+      }
+
+      btn.addEventListener('click', summarize);
+
+      // Allow Ctrl+Enter to submit
+      articleEl.addEventListener('keydown', function(e) {
+        if (e.ctrlKey && e.key === 'Enter') {
+          summarize();
+        }
+      });
+    })();
   </script>
 </body>
 </html>
